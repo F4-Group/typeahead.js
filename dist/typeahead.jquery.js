@@ -1,7 +1,7 @@
 /*!
  * typeahead.js 0.11.1
  * https://github.com/twitter/typeahead.js
- * Copyright 2013-2015 Twitter, Inc. and other contributors; Licensed MIT
+ * Copyright 2013-2016 Twitter, Inc. and other contributors; Licensed MIT
  */
 
 (function(root, factory) {
@@ -12,7 +12,7 @@
     } else if (typeof exports === "object") {
         module.exports = factory(require("jquery"));
     } else {
-        factory(jQuery);
+        factory(root["jQuery"]);
     }
 })(this, function($) {
     var _ = function() {
@@ -672,6 +672,7 @@
             this.templates = getTemplates(o.templates, this.displayFn);
             this.source = o.source.__ttAdapter ? o.source.__ttAdapter() : o.source;
             this.async = _.isUndefined(o.async) ? this.source.length > 2 : !!o.async;
+            this.updateOnAsync = this.async && o.updateOnAsync === true;
             this._resetLastSuggestion();
             this.$el = $(o.node).addClass(this.classes.dataset).addClass(this.classes.dataset + "-" + this.name);
         }
@@ -690,9 +691,9 @@
                 suggestions = suggestions || [];
                 if (suggestions.length) {
                     this._renderSuggestions(query, suggestions);
-                } else if (this.async && this.templates.pending) {
+                } else if (this.async && !this.updateOnAsync && this.templates.pending) {
                     this._renderPending(query);
-                } else if (!this.async && this.templates.notFound) {
+                } else if ((!this.async || this.updateOnAsync) && this.templates.notFound) {
                     this._renderNotFound(query);
                 } else {
                     this._empty();
@@ -782,7 +783,7 @@
                 }, obj) : obj;
             },
             update: function update(query) {
-                var that = this, canceled = false, syncCalled = false, rendered = 0;
+                var that = this, canceled = false, syncCalled = false, rendered = 0, unrenderedSuggestions = [];
                 this.cancel();
                 this.cancel = function cancel() {
                     canceled = true;
@@ -797,18 +798,21 @@
                     }
                     syncCalled = true;
                     suggestions = (suggestions || []).slice(0, that.limit);
-                    rendered = suggestions.length;
-                    that._overwrite(query, suggestions);
+                    if (!that.updateOnAsync) {
+                        rendered = suggestions.length;
+                        that._overwrite(query, suggestions);
+                    } else unrenderedSuggestions = suggestions;
                     if (rendered < that.limit && that.async) {
                         that.trigger("asyncRequested", query);
                     }
                 }
                 function async(suggestions) {
-                    suggestions = suggestions || [];
+                    suggestions = unrenderedSuggestions.concat(suggestions).slice(0, that.limit - rendered);
                     if (!canceled && rendered < that.limit) {
                         that.cancel = $.noop;
-                        that._append(query, suggestions.slice(0, that.limit - rendered));
-                        rendered += suggestions.length;
+                        var idx = Math.abs(rendered - that.limit);
+                        rendered += idx;
+                        if (!that.updateOnAsync) that._append(query, suggestions.slice(0, idx)); else that._overwrite(query, suggestions.slice(0, idx));
                         that.async && that.trigger("asyncReceived", query);
                     }
                 }
@@ -914,6 +918,9 @@
                 this.$node.on("click.tt", this.selectors.selectable, onSelectableClick);
                 this.$node.on("mouseover", this.selectors.selectable, function() {
                     that.setCursor($(this));
+                });
+                this.$node.on("mouseleave", function() {
+                    that._removeCursor();
                 });
                 _.each(this.datasets, function(dataset) {
                     dataset.onSync("asyncRequested", that._propagate, that).onSync("asyncCanceled", that._propagate, that).onSync("asyncReceived", that._propagate, that).onSync("rendered", that._onRendered, that).onSync("cleared", that._onCleared, that);
